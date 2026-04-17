@@ -10,8 +10,6 @@
     "src/shared/config/**"
   ],
   "ignoreDependencies": [
-    "framer-motion",
-    "recharts",
     "tailwindcss",
     "postcss"
   ]

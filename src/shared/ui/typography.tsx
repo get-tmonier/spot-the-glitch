@@ -8,12 +8,6 @@ export function H1({ className, ...props }: HeadingProps) {
   );
 }
 
-export function H2({ className, ...props }: HeadingProps) {
-  return (
-    <h2 className={cn("text-2xl font-semibold tracking-tight md:text-3xl", className)} {...props} />
-  );
-}
-
 type TextProps = React.HTMLAttributes<HTMLParagraphElement>;
 
 export function Text({ className, ...props }: TextProps) {

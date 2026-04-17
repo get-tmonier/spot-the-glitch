@@ -14,3 +14,40 @@ body {
     -apple-system,
     sans-serif;
 }
+
+@keyframes glitch {
+  0%,
+  87%,
+  100% {
+    clip-path: none;
+    transform: none;
+    color: inherit;
+  }
+  88% {
+    clip-path: inset(15% 0 55% 0);
+    transform: translate(-3px, 0);
+    color: #f97316;
+  }
+  89% {
+    clip-path: inset(55% 0 15% 0);
+    transform: translate(3px, 0);
+    color: #3b82f6;
+  }
+  90% {
+    clip-path: none;
+    transform: none;
+    color: inherit;
+  }
+  91% {
+    clip-path: inset(35% 0 35% 0);
+    transform: translate(-1px, 0);
+  }
+  92% {
+    clip-path: none;
+    transform: none;
+  }
+}
+
+.glitch-text {
+  animation: glitch 5s infinite;
+}
