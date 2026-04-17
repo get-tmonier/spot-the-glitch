@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -30,7 +31,7 @@ class GlitchedTrajectory:
     source_seed: int
     injection_index: int
     glitch_family: GlitchFamily
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 def _pick_injection_index(rng: np.random.Generator) -> int:
@@ -126,13 +127,11 @@ def save_glitched(g: GlitchedTrajectory, path: Path) -> None:
         source_seed=np.int64(g.source_seed),
         injection_index=np.int64(g.injection_index),
         glitch_family=np.array(g.glitch_family),
-        metadata_json=np.array(__import__("json").dumps(g.metadata)),
+        metadata_json=np.array(json.dumps(g.metadata)),
     )
 
 
 def load_glitched(path: Path) -> GlitchedTrajectory:
-    import json
-
     data = np.load(path, allow_pickle=False)
     return GlitchedTrajectory(
         frames=data["frames"],
