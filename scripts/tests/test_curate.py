@@ -96,11 +96,14 @@ def test_select_pairs_respects_targets_and_tiers():
 
 def test_select_pairs_deterministic():
     normal = [curate.NormalEntry(id=f"n_{i:03d}", curve=_flat()) for i in range(40)]
+    # Peaks span all three tiers: 2.0→easy(20), 0.5→medium(5), 0.3→hard(3),
+    # 1.5→easy(15), 0.4→medium(4). Over 40 entries: 16 easy, 16 medium, 8 hard.
+    tier_peaks = [2.0, 0.5, 0.3, 1.5, 0.4]
     glitched = [
         curate.GlitchedEntry(
             id=f"g_{i:03d}",
-            curve=_spike(peak=0.5 + (i % 5) * 0.3, base=0.1),
-            tier=curate.assign_tier(_spike(peak=0.5 + (i % 5) * 0.3, base=0.1)),
+            curve=_spike(peak=tier_peaks[i % 5], base=0.1),
+            tier=curate.assign_tier(_spike(peak=tier_peaks[i % 5], base=0.1)),
             glitch_family="teleport",
             source_id=f"n_{i:03d}",
         )
