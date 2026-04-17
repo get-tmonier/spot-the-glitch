@@ -19,7 +19,8 @@
     "deps:check": "ncu",
     "deps:update": "ncu -u && bun install",
     "verify": "bun run type-check && bun run format && bun run lint && bun run fsd && bun run knip && bun test",
-    "verify:fix": "bun run format:fix && bun run lint:fix && bun run knip:fix && bun run verify"
+    "verify:fix": "bun run format:fix && bun run lint:fix && bun run knip:fix && bun run verify",
+    "prepare": "git config core.hooksPath .githooks"
   },
   "dependencies": {
     "@vercel/analytics": "2.0.1",
