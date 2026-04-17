@@ -1,0 +1,7 @@
+{
+  "target": "latest",
+  "removeRange": true,
+  "cooldown": "3d",
+  "cache": true,
+  "cacheExpiration": 1440
+}

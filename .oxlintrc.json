@@ -1,0 +1,8 @@
+{
+  "rules": {
+    "no-unused-vars": "warn",
+    "no-console": "warn",
+    "eqeqeq": "error"
+  },
+  "plugins": ["react", "typescript", "nextjs", "import"]
+}
