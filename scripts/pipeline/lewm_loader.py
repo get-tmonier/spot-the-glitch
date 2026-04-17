@@ -5,15 +5,14 @@ The config references ``stable_worldmodel.wm.lewm.LeWM`` and sub-classes from
 ``stable_worldmodel.wm.lewm.module``, which don't exist in the publicly released
 ``stable-worldmodel==0.0.6``.
 
-We reconstruct the architecture from the state dict keys:
-
+We reconstruct the architecture from the real source (lucas-maes/le-wm):
   encoder.*          — ViT-tiny (HuggingFace format, via stable_pretraining)
-  predictor.*        — temporal DiT-style causal transformer (T=3 timesteps)
-  action_encoder.*   — 1-D conv + MLP action embedder (unused at inference)
-  projector.*        — MLP projector with BatchNorm (unused at inference)
-  pred_proj.*        — MLP prediction projector (unused at inference)
+  predictor.*        — ARPredictor: causal transformer conditioned on action embeddings
+  action_encoder.*   — Embedder: Conv1d + 2-layer MLP mapping 10-D actions → 192-D
+  projector.*        — MLP with BatchNorm1d projecting CLS token into predictor space
+  pred_proj.*        — MLP with BatchNorm1d projecting predictor output back to embed space
 
-score.py only needs model.encode() and model.predict().
+score.py calls model.encode() and model.predict(emb, act_emb).
 """
 
 from __future__ import annotations
@@ -28,8 +27,19 @@ from torch import nn
 
 from pipeline import config
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+    return x * (1.0 + scale) + shift
+
+
 # ---------------------------------------------------------------------------
 # LeWM sub-modules (state-dict-compatible implementations)
+# Faithfully reconstructed from lucas-maes/le-wm (module.py / jepa.py).
 # ---------------------------------------------------------------------------
 
 
@@ -41,19 +51,11 @@ class _Attention(nn.Module):
         self.dropout = dropout
         self.norm = nn.LayerNorm(dim)
         self.to_qkv = nn.Linear(dim, inner * 3, bias=False)
-        self.to_out = nn.Sequential(nn.Linear(inner, dim))
+        self.to_out = nn.Sequential(nn.Linear(inner, dim), nn.Dropout(dropout))
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        scale: torch.Tensor | None = None,
-        shift: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        h = self.norm(x)
-        if scale is not None:
-            h = h * (1.0 + scale) + shift
-        qkv = self.to_qkv(h)
-        q, k, v = qkv.chunk(3, dim=-1)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.norm(x)
+        q, k, v = self.to_qkv(x).chunk(3, dim=-1)
         q, k, v = (rearrange(t, "b n (h d) -> b h n d", h=self.heads) for t in (q, k, v))
         out = F.scaled_dot_product_attention(
             q, k, v, is_causal=True, dropout_p=self.dropout if self.training else 0.0
@@ -63,44 +65,42 @@ class _Attention(nn.Module):
 
 
 class _FeedForward(nn.Module):
-    def __init__(self, dim: int, mlp_dim: int) -> None:
+    def __init__(self, dim: int, mlp_dim: int, dropout: float = 0.0) -> None:
         super().__init__()
         self.net = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, mlp_dim),
-            nn.GELU(),
-            nn.Dropout(0.0),
-            nn.Linear(mlp_dim, dim),
+            nn.LayerNorm(dim),        # 0 — weights at net.0.*
+            nn.Linear(dim, mlp_dim),  # 1 — weights at net.1.*
+            nn.GELU(),                # 2
+            nn.Dropout(dropout),      # 3
+            nn.Linear(mlp_dim, dim),  # 4 — weights at net.4.*
+            nn.Dropout(dropout),      # 5
         )
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        scale: torch.Tensor | None = None,
-        shift: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        h = self.net[0](x)
-        if scale is not None:
-            h = h * (1.0 + scale) + shift
-        h = self.net[1](h)
-        h = self.net[2](h)
-        h = self.net[3](h)
-        h = self.net[4](h)
-        return h
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
 
 
-class _AdaLNBlock(nn.Module):
+class _ConditionalBlock(nn.Module):
+    """ConditionalBlock from module.py — AdaLN-zero conditioned on action embedding."""
+
     def __init__(self, dim: int, heads: int, dim_head: int, mlp_dim: int, dropout: float) -> None:
         super().__init__()
         self.attn = _Attention(dim, heads, dim_head, dropout)
-        self.mlp = _FeedForward(dim, mlp_dim)
+        self.mlp = _FeedForward(dim, mlp_dim, dropout)
+        # elementwise_affine=False: no learned affine params → not in state_dict
+        self.norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
         self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim, 6 * dim))
 
+        nn.init.constant_(self.adaLN_modulation[-1].weight, 0)
+        nn.init.constant_(self.adaLN_modulation[-1].bias, 0)
+
     def forward(self, x: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-        mods = self.adaLN_modulation(c)  # (B, T, 6*d)
-        shift_a, scale_a, gate_a, shift_m, scale_m, gate_m = mods.chunk(6, dim=-1)
-        x = x + gate_a * self.attn(x, scale=scale_a, shift=shift_a)
-        x = x + gate_m * self.mlp(x, scale=scale_m, shift=shift_m)
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
+            self.adaLN_modulation(c).chunk(6, dim=-1)
+        )
+        x = x + gate_msa * self.attn(_modulate(self.norm1(x), shift_msa, scale_msa))
+        x = x + gate_mlp * self.mlp(_modulate(self.norm2(x), shift_mlp, scale_mlp))
         return x
 
 
@@ -111,7 +111,7 @@ class _PredTransformer(nn.Module):
         super().__init__()
         self.norm = nn.LayerNorm(dim)
         self.layers = nn.ModuleList(
-            [_AdaLNBlock(dim, heads, dim_head, mlp_dim, dropout) for _ in range(depth)]
+            [_ConditionalBlock(dim, heads, dim_head, mlp_dim, dropout) for _ in range(depth)]
         )
 
     def forward(self, x: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
@@ -121,6 +121,8 @@ class _PredTransformer(nn.Module):
 
 
 class _Predictor(nn.Module):
+    """ARPredictor from module.py: pos embedding + causal transformer conditioned on actions."""
+
     def __init__(
         self,
         num_frames: int,
@@ -139,27 +141,29 @@ class _Predictor(nn.Module):
         self.pos_embedding = nn.Parameter(torch.randn(1, num_frames, input_dim))
         self.transformer = _PredTransformer(hidden_dim, depth, heads, dim_head, mlp_dim, dropout)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, T, d) — one token per timestep (patch-pooled)
-        t_steps = x.shape[1]
-        pos = self.pos_embedding[:, :t_steps].expand(x.shape[0], -1, -1)
-        x = x + pos
-        return self.transformer(x, pos)
+    def forward(self, x: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
+        # x: (N, T, d)  c: (N, T, act_emb_dim=d)
+        t_steps = x.size(1)
+        x = x + self.pos_embedding[:, :t_steps]
+        return self.transformer(x, c)
 
 
 class _Embedder(nn.Module):
-    """Action encoder: Conv1d patch embed + 2-layer MLP."""
+    """Embedder from module.py — Conv1d patch embed + SiLU MLP → action embedding."""
 
     def __init__(self, input_dim: int, emb_dim: int) -> None:
         super().__init__()
         self.patch_embed = nn.Conv1d(input_dim, input_dim, kernel_size=1)
+        # mlp_scale=4 from Embedder defaults → hidden = 4 * emb_dim = 768 for emb_dim=192
+        hidden = 4 * emb_dim
         self.embed = nn.Sequential(
-            nn.Linear(input_dim, 768),
-            nn.GELU(),
-            nn.Linear(768, emb_dim),
+            nn.Linear(input_dim, hidden),  # 0
+            nn.SiLU(),                     # 1
+            nn.Linear(hidden, emb_dim),    # 2
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, T, input_dim)
         x = x.permute(0, 2, 1)
         x = self.patch_embed(x)
         x = x.permute(0, 2, 1)
@@ -167,15 +171,15 @@ class _Embedder(nn.Module):
 
 
 class _MLP(nn.Module):
-    """Projector / pred_proj: Linear → BatchNorm1d → GELU → Linear."""
+    """MLP from module.py — Linear → BatchNorm1d → GELU → Linear."""
 
     def __init__(self, input_dim: int, output_dim: int, hidden_dim: int) -> None:
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, output_dim),
+            nn.Linear(input_dim, hidden_dim),  # 0
+            nn.BatchNorm1d(hidden_dim),         # 1
+            nn.GELU(),                          # 2
+            nn.Linear(hidden_dim, output_dim),  # 3
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -185,9 +189,8 @@ class _MLP(nn.Module):
 class LeWM(nn.Module):
     """Le World Model — reconstructed from checkpoint state dict.
 
-    Only encode() and predict() are called at inference by score.py.
-    action_encoder / projector / pred_proj are present for load_state_dict
-    compatibility (strict=True) but are not invoked during scoring.
+    encode(info) → info["embed"] of shape (B, T, d)
+    predict(emb, act_emb) → (N, T, d)  predicted embeddings
     """
 
     history_size: int = 3
@@ -211,43 +214,40 @@ class LeWM(nn.Module):
         self,
         info: dict[str, torch.Tensor],
         pixels_key: str = "pixels",
-        emb_keys: list[str] | None = None,  # noqa: ARG002
         target: str = "embed",
         **_: object,
     ) -> dict[str, torch.Tensor]:
-        """Encode frame sequences into per-patch embeddings.
+        """Encode frame sequences into CLS-token projected embeddings.
 
         Args:
-            info: dict with pixels key of shape (B, T, C, H, W).
-            pixels_key: key name for pixels in info.
-            emb_keys: extra encoder keys; pass [] to skip action encoding.
-            target: output key in info for shape (B, T, P, d).
+            info: dict with pixels of shape (B, T, C, H, W).
+            pixels_key: key for pixel tensor in info.
+            target: output key in info; result shape (B, T, d).
         """
         pixels = info[pixels_key].float()  # (B, T, C, H, W)
         b_size, t_steps = pixels.shape[:2]
         frames = rearrange(pixels, "b t c h w -> (b t) c h w")
         raw = self.encoder(frames, interpolate_pos_encoding=True)
-        if hasattr(raw, "last_hidden_state"):
-            embed = raw.last_hidden_state[:, 1:]  # drop CLS: (B*T, P, d)
-        else:
-            embed = raw.logits.unsqueeze(1)
-        embed = rearrange(embed.detach(), "(b t) p d -> b t p d", b=b_size)
-        info[target] = embed
+        # CLS token is index 0 in last_hidden_state
+        cls_emb = raw.last_hidden_state[:, 0]  # (B*T, d)
+        proj = self.projector(cls_emb)  # (B*T, d)
+        info[target] = rearrange(proj, "(b t) d -> b t d", b=b_size)
         return info
 
-    def predict(self, windows: torch.Tensor) -> torch.Tensor:
-        """Predict next-frame patch embeddings from a context window.
+    def predict(self, emb: torch.Tensor, act_emb: torch.Tensor) -> torch.Tensor:
+        """Predict next-frame embeddings from context embeddings + action embeddings.
 
         Args:
-            windows: (N, T, P, d) — batch of sliding context windows.
+            emb: (N, T, d) — context frame embeddings (already projected).
+            act_emb: (N, T, act_emb_dim) — action embeddings from action_encoder.
 
         Returns:
-            preds: (N, T, P, d) — broadcast predicted embeddings.
+            preds: (N, T, d) — predicted embeddings via pred_proj.
         """
-        _n, _t, n_patches, _d = windows.shape
-        x = windows.mean(dim=2)  # pool patches → (N, T, d)
-        preds = self.predictor(x)  # (N, T, d)
-        return preds.unsqueeze(2).expand(-1, -1, n_patches, -1)  # (N, T, P, d)
+        preds = self.predictor(emb, act_emb)  # (N, T, d)
+        n_batch, t_steps, dim = preds.shape
+        preds = self.pred_proj(preds.reshape(n_batch * t_steps, dim))
+        return preds.reshape(n_batch, t_steps, dim)
 
 
 # ---------------------------------------------------------------------------
@@ -319,11 +319,7 @@ def pick_device(prefer_mps: bool = True) -> torch.device:
 
 
 def load(checkpoint_path: Path | None = None, prefer_mps: bool = True) -> LoadedModel:
-    """Load the pretrained LeWM Push-T model in eval mode.
-
-    Raises FileNotFoundError if the checkpoint is missing.
-    Raises RuntimeError if architecture build or weight load fails.
-    """
+    """Load the pretrained LeWM Push-T model in eval mode."""
     path = checkpoint_path or config.CHECKPOINT_FILE
     if not path.exists():
         raise FileNotFoundError(
@@ -361,27 +357,37 @@ def load(checkpoint_path: Path | None = None, prefer_mps: bool = True) -> Loaded
 
 
 def smoke_test() -> bool:
-    """Forward-pass random frames through encode+predict. Returns True on success."""
+    """Forward-pass random frames+actions through encode+predict. Returns True on success."""
     import numpy as np
 
     try:
         loaded = load()
-        t_frames = 4
-        dummy = torch.from_numpy(
+        model = loaded.model
+        device = loaded.device
+
+        # Frameskip=5: 6 frames, 5 action windows of 10D each
+        t_frames = 6
+        act_input_dim = 10  # 5 raw actions × 2D = 10
+        dummy_pixels = torch.from_numpy(
             np.random.rand(1, t_frames, 3, config.RENDER_SIZE, config.RENDER_SIZE).astype("float32")
-        ).to(loaded.device)
+        ).to(device)
+        dummy_actions = torch.zeros(1, t_frames - 1, act_input_dim, device=device)
 
         with torch.no_grad():
-            info = loaded.model.encode({"pixels": dummy})
-            embed = info["embed"]  # (1, T, P, d)
-            assert embed.ndim == 4, f"encode returned wrong rank: {embed.shape}"
-            window = embed[:, :3]  # (1, 3, P, d)
-            preds = loaded.model.predict(window)
-            assert preds.shape == window.shape, (
-                f"predict shape mismatch: {preds.shape} vs {window.shape}"
+            info = model.encode({"pixels": dummy_pixels})
+            embed = info["embed"]  # (1, T, d)
+            assert embed.ndim == 3, f"encode returned wrong rank: {embed.shape}"
+
+            act_emb = model.action_encoder(dummy_actions)  # (1, T-1, d)
+            # Use first 3 frames as context window
+            window_emb = embed[:, :3]   # (1, 3, d)
+            window_act = act_emb[:, :3]  # (1, 3, d) — pad: use what we have
+            preds = model.predict(window_emb, window_act)
+            assert preds.shape == window_emb.shape, (
+                f"predict shape mismatch: {preds.shape} vs {window_emb.shape}"
             )
 
-        print(f"[lewm_loader] smoke test OK on {loaded.device}")
+        print(f"[lewm_loader] smoke test OK on {device}")
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"[lewm_loader] smoke test FAILED: {exc}")

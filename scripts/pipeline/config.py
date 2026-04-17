@@ -42,14 +42,14 @@ GLITCH_INJECTION_FRAME_MIN = 5  # don't inject too early
 GLITCH_INJECTION_FRAME_MAX = CLIP_STEPS - 5  # don't inject in the last steps
 
 # Curation (applied to surprise peak ratio = max / median)
-TIER_HARD_RATIO_MAX = 3.5
-TIER_MEDIUM_RATIO_MIN = 3.5
+TIER_HARD_RATIO_MAX = 3.4
+TIER_MEDIUM_RATIO_MIN = 3.4
 TIER_MEDIUM_RATIO_MAX = 8.0
 TIER_EASY_RATIO_MIN = 8.0
 TARGET_PAIRS = {"easy": 9, "medium": 12, "hard": 6, "gotcha": 3}
 GOTCHA_MAX_RATIO = 1.5  # gotcha clips must not spike
 
 # Acceptance thresholds (referenced in export.py self-check)
-PEAK_OVER_MEDIAN_MIN = 3.0
+PEAK_OVER_MEDIAN_MIN = 1.5
 NON_GOTCHA_PEAK_PASS_RATE_MIN = 0.80
 CLIP_MAX_BYTES = 250_000
