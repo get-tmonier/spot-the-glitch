@@ -1,0 +1,18 @@
+{
+  "entry": ["src/app/**/*.{ts,tsx}"],
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": [
+    "src/views/**/index.ts",
+    "src/widgets/**/index.ts",
+    "src/features/**/index.ts",
+    "src/entities/**/index.ts",
+    "src/shared/types/**",
+    "src/shared/config/**"
+  ],
+  "ignoreDependencies": [
+    "framer-motion",
+    "recharts",
+    "tailwindcss",
+    "postcss"
+  ]
+}
