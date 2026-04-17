@@ -10,7 +10,6 @@ from pipeline import config, curate, export, glitch, score, simulate
 app = typer.Typer(add_completion=False, help="Spot the Glitch — local LeWM pipeline.")
 
 
-@app.command()
 def simulate_cmd(
     n: int = typer.Option(config.DEFAULT_N_ROLLOUTS, "--n", help="Number of normal rollouts."),
     force: bool = typer.Option(False, "--force", help="Regenerate even if outputs exist."),
@@ -27,7 +26,6 @@ def simulate_cmd(
 app.command(name="simulate")(simulate_cmd)
 
 
-@app.command()
 def glitch_cmd(
     seed: int = typer.Option(config.BASE_SEED, "--seed", help="Determinism seed."),
     force: bool = typer.Option(False, "--force"),
@@ -39,6 +37,10 @@ def glitch_cmd(
         return
     sources = sorted(config.TRAJ_DIR.glob("*.npz"))
     if not sources:
+        typer.echo(
+            "[glitch] no trajectories found in data/trajectories/ — run `simulate` first",
+            err=True,
+        )
         raise typer.Exit(code=1)
     mix = glitch.plan_family_mix(total=len(sources), seed=seed)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -55,7 +57,6 @@ def glitch_cmd(
 app.command(name="glitch")(glitch_cmd)
 
 
-@app.command()
 def score_cmd(force: bool = typer.Option(False, "--force")) -> None:
     """Run LeWM inference to produce surprise arrays."""
     surprise_base = config.SURPRISE_DIR
@@ -92,7 +93,6 @@ def _load_curate_inputs() -> tuple[list[curate.GlitchedEntry], list[curate.Norma
     return glitched_entries, normal_entries
 
 
-@app.command()
 def curate_cmd(
     seed: int = typer.Option(config.BASE_SEED, "--seed"),
     force: bool = typer.Option(False, "--force"),
@@ -111,7 +111,6 @@ def curate_cmd(
 app.command(name="curate")(curate_cmd)
 
 
-@app.command()
 def export_cmd() -> None:
     """Encode MP4s + build quiz-data.json + run acceptance checks."""
     selection = curate.load_selection(config.DATA_DIR / "selection.json")
@@ -126,18 +125,14 @@ def export_cmd() -> None:
 app.command(name="export")(export_cmd)
 
 
-@app.command()
 def quick() -> None:
-    """Dev fast path: small N, writes to data/debug/ for hand inspection."""
-    config.DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-    typer.echo(f"[quick] running n={config.QUICK_N_ROLLOUTS} end-to-end into {config.DEBUG_DIR}")
-    # Implementation intentionally minimal: run simulate + glitch + score into the main dirs
-    # with a smaller N. Curate/export expect the main dirs.
-    simulate.simulate_many(n=config.QUICK_N_ROLLOUTS, out_dir=config.TRAJ_DIR)
+    """Dev fast path: small N, runs simulate+glitch+score end-to-end into the main data dirs."""
+    typer.echo(f"[quick] running n={config.QUICK_N_ROLLOUTS} end-to-end")
+    # Curate/export expect the main dirs, so run into them. Use the returned paths
+    # directly so stale trajectories from earlier full runs don't contaminate the zip.
+    new_paths = simulate.simulate_many(n=config.QUICK_N_ROLLOUTS, out_dir=config.TRAJ_DIR)
     mix = glitch.plan_family_mix(total=config.QUICK_N_ROLLOUTS, seed=config.BASE_SEED)
-    for i, (src_path, family) in enumerate(
-        zip(sorted(config.TRAJ_DIR.glob("*.npz")), mix, strict=True)
-    ):
+    for i, (src_path, family) in enumerate(zip(sorted(new_paths), mix, strict=True)):
         src = simulate.load_trajectory(src_path)
         base = glitch.BaseTrajectory(
             frames=src.frames, states=src.states, actions=src.actions, seed=src.seed
