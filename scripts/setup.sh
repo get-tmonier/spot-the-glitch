@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GDRIVE_FILE_ID="<GDRIVE_FILE_ID>"
+# Upstream moved from Google Drive to HuggingFace. The repo ships weights.pt
+# (state dict) alongside config.json; we combine them into the dict layout
+# lewm_loader.load() expects.
+HF_REPO="quentinll/lewm-pusht"
+HF_BASE="https://huggingface.co/${HF_REPO}/resolve/main"
 CHECKPOINT_PATH="checkpoints/pusht_lewm.pt"
 
 echo "[setup] 1/4 verifying uv is installed"
@@ -13,21 +17,28 @@ fi
 echo "[setup] 2/4 syncing environment with uv"
 uv sync
 
-echo "[setup] 3/4 downloading pretrained checkpoint"
+echo "[setup] 3/4 downloading pretrained checkpoint from ${HF_REPO}"
 mkdir -p checkpoints
 if [[ -f "$CHECKPOINT_PATH" ]]; then
   echo "[setup] checkpoint already present at $CHECKPOINT_PATH — skipping"
 else
-  if [[ "$GDRIVE_FILE_ID" == "<GDRIVE_FILE_ID>" ]]; then
-    echo "[setup] ERROR: GDRIVE_FILE_ID not set in setup.sh." >&2
-    echo "[setup] See https://github.com/lucas-maes/le-wm README for the Push-T checkpoint link." >&2
-    exit 1
-  fi
-  uv run gdown --id "$GDRIVE_FILE_ID" -O "$CHECKPOINT_PATH" || {
-    echo "[setup] ERROR: checkpoint download failed." >&2
-    echo "[setup] Verify the GDRIVE_FILE_ID and upstream availability." >&2
-    exit 1
-  }
+  TMP_DIR="$(mktemp -d)"
+  trap 'rm -rf "$TMP_DIR"' EXIT
+  echo "[setup]   fetching weights.pt (72 MB)"
+  curl -fL --retry 3 -o "$TMP_DIR/weights.pt" "$HF_BASE/weights.pt"
+  echo "[setup]   fetching config.json"
+  curl -fL --retry 3 -o "$TMP_DIR/config.json" "$HF_BASE/config.json"
+  uv run python - "$TMP_DIR/weights.pt" "$TMP_DIR/config.json" "$CHECKPOINT_PATH" <<'PY'
+import json
+import sys
+import torch
+
+weights_path, config_path, out_path = sys.argv[1:]
+state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+with open(config_path) as f:
+    config = json.load(f)
+torch.save({"state_dict": state_dict, "config": config}, out_path)
+PY
 fi
 
 echo "[setup] 4/4 running smoke test"
