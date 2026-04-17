@@ -10,6 +10,7 @@ dependencies = [
   "imageio[ffmpeg]>=2.34",
   "jsonschema>=4.22",
   "stable-worldmodel[env]>=0.0.6",
+  "stable-pretraining>=0.0.1",
 ]
 
 [dependency-groups]
