@@ -9,7 +9,6 @@ dependencies = [
   "typer>=0.12",
   "imageio[ffmpeg]>=2.34",
   "jsonschema>=4.22",
-  "gdown>=5.2",
   "stable-worldmodel[env]>=0.0.6",
 ]
 
