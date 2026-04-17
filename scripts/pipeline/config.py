@@ -19,7 +19,7 @@ PUBLIC_CLIPS_DIR = REPO_ROOT / "public" / "clips"
 PUBLIC_QUIZ_JSON = REPO_ROOT / "public" / "quiz-data.json"
 
 # Environment / rollouts
-ENV_NAME = "pusht"
+ENV_NAME = "swm/PushT-v1"  # Gymnasium id registered by stable_worldmodel
 ENV_FPS = 10  # Push-T step rate
 CLIP_DURATION_SEC = 3
 CLIP_STEPS = ENV_FPS * CLIP_DURATION_SEC  # T = 30
