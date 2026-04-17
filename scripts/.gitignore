@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# uv / venv
+.venv/
+.python-version.local
+
+# Pipeline cache (regenerable)
+data/
+checkpoints/

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "spot-the-glitch quiz data",
+  "type": "object",
+  "required": ["schemaVersion", "generatedAt", "clipFps", "clipDurationSec", "distribution", "pool"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "clipFps": { "type": "integer", "minimum": 1 },
+    "clipDurationSec": { "type": "integer", "minimum": 1 },
+    "distribution": {
+      "type": "object",
+      "required": ["easy", "medium", "hard", "gotcha"],
+      "properties": {
+        "easy": { "type": "integer", "minimum": 0 },
+        "medium": { "type": "integer", "minimum": 0 },
+        "hard": { "type": "integer", "minimum": 0 },
+        "gotcha": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "pool": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Pair" }
+    }
+  },
+  "$defs": {
+    "Pair": {
+      "type": "object",
+      "required": ["id", "tier", "glitchFamily", "clipA", "clipB"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^pair_\\d{4}$" },
+        "tier": { "enum": ["easy", "medium", "hard", "gotcha"] },
+        "glitchFamily": { "enum": ["teleport", "time-reversal", "none"] },
+        "clipA": { "$ref": "#/$defs/Clip" },
+        "clipB": { "$ref": "#/$defs/Clip" }
+      },
+      "additionalProperties": false
+    },
+    "Clip": {
+      "type": "object",
+      "required": ["src", "isGlitched", "surpriseScore"],
+      "properties": {
+        "src": { "type": "string", "pattern": "^/clips/pair_\\d{4}_[ab]\\.mp4$" },
+        "isGlitched": { "type": "boolean" },
+        "surpriseScore": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

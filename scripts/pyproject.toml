@@ -1,0 +1,47 @@
+[project]
+name = "spot-the-glitch-pipeline"
+version = "0.1.0"
+description = "Local LeWM clip generation pipeline for Spot the Glitch"
+requires-python = "==3.10.*"
+dependencies = [
+  "torch>=2.4",
+  "numpy>=1.26",
+  "typer>=0.12",
+  "imageio[ffmpeg]>=2.34",
+  "jsonschema>=4.22",
+  "stable-worldmodel[env]>=0.0.6",
+  "stable-pretraining>=0.0.1",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.2",
+  "poethepoet>=0.27",
+  "ruff>=0.5",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+
+[tool.poe.tasks]
+setup = { shell = "bash setup.sh" }
+simulate = "python generate.py simulate"
+glitch = "python generate.py glitch"
+score = "python generate.py score"
+curate = "python generate.py curate"
+export = "python generate.py export"
+all = ["simulate", "glitch", "score", "curate", "export"]
+quick = "python generate.py quick"
+test = "pytest"
+lint = "ruff check ."
+format = "ruff format ."
+"format:check" = "ruff format --check ."
+verify = ["lint", "format:check", "test"]
