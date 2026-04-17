@@ -122,12 +122,14 @@ def export_all(selection: curate.Selection, curves: dict[str, np.ndarray]) -> di
     pass_rate = peak_pass_rate(non_gotcha_glitched_curves)
     gotcha_flat = gotcha_curves_flat(gotcha_curves)
 
-    # File size check.
+    # File size check — audit only clips this run produced, not stale files.
     over_budget = []
-    for clip in config.PUBLIC_CLIPS_DIR.glob("pair_*.mp4"):
-        size = clip.stat().st_size
-        if size > config.CLIP_MAX_BYTES:
-            over_budget.append((clip.name, size))
+    for p in selection.pairs:
+        for side in ("a", "b"):
+            clip = config.PUBLIC_CLIPS_DIR / f"{p.id}_{side}.mp4"
+            size = clip.stat().st_size
+            if size > config.CLIP_MAX_BYTES:
+                over_budget.append((clip.name, size))
 
     report = {
         "pairs": len(selection.pairs),
