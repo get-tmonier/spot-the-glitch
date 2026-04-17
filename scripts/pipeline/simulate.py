@@ -34,21 +34,22 @@ def rollout(seed: int, steps: int = config.CLIP_STEPS) -> Trajectory:
     )
     rng = np.random.default_rng(seed)
 
-    obs, _info = env.reset(seed=seed)
-    frames = [env.render()]
-    states = [_extract_state(obs)]
-    actions: list[np.ndarray] = []
+    try:
+        obs, _info = env.reset(seed=seed)
+        frames = [env.render()]
+        states = [_extract_state(obs)]
+        actions: list[np.ndarray] = []
 
-    low = env.action_space.low
-    high = env.action_space.high
-    for _ in range(steps - 1):
-        action = rng.uniform(low=low, high=high).astype(np.float32)
-        obs, _reward, _terminated, _truncated, _info = env.step(action)
-        frames.append(env.render())
-        states.append(_extract_state(obs))
-        actions.append(action)
-
-    env.close()
+        low = env.action_space.low
+        high = env.action_space.high
+        for _ in range(steps - 1):
+            action = rng.uniform(low=low, high=high).astype(np.float32)
+            obs, _reward, _terminated, _truncated, _info = env.step(action)
+            frames.append(env.render())
+            states.append(_extract_state(obs))
+            actions.append(action)
+    finally:
+        env.close()
     return Trajectory(
         frames=np.stack(frames).astype(np.uint8),
         states=np.stack(states).astype(np.float32),
@@ -69,13 +70,13 @@ def save_trajectory(traj: Trajectory, path: Path) -> None:
 
 
 def load_trajectory(path: Path) -> Trajectory:
-    data = np.load(path)
-    return Trajectory(
-        frames=data["frames"],
-        states=data["states"],
-        actions=data["actions"],
-        seed=int(data["seed"]),
-    )
+    with np.load(path) as data:
+        return Trajectory(
+            frames=data["frames"],
+            states=data["states"],
+            actions=data["actions"],
+            seed=int(data["seed"]),
+        )
 
 
 def simulate_many(n: int, out_dir: Path | None = None) -> list[Path]:
