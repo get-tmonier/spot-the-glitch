@@ -39,7 +39,7 @@ from pipeline import config, glitch, lewm_loader, simulate
 
 def _frames_to_tensor(frames: np.ndarray, device: torch.device) -> torch.Tensor:
     """(T, H, W, C) uint8 -> (T, C, H, W) float32 in [0,1] on device."""
-    t = torch.from_numpy(frames).to(device).float() / 255.0
+    t = torch.from_numpy(np.ascontiguousarray(frames)).to(device).float() / 255.0
     return t.permute(0, 3, 1, 2).contiguous()
 
 
@@ -89,7 +89,7 @@ def surprise_curve(
         t_total, n_patches, dim = embed.shape
 
         # Build a batch of sliding windows, each of length `history_size`,
-        # right-padded at the start for early frames by repeating frame 0.
+        # left-padded (repeat frame 0) so every window has length history_size.
         # Window i (for i in [0, T-2]) ends at frame i; target is frame i+1.
         n_windows = t_total - 1
         windows = torch.empty(
@@ -110,6 +110,14 @@ def surprise_curve(
 
         # Batched prediction: (N, history_size, P, d) -> (N, history_size, P, d)
         preds = model.predict(windows)
+        assert preds.ndim == windows.ndim, (
+            f"model.predict returned unexpected rank {preds.ndim}; "
+            f"expected {windows.ndim} to match input windows {tuple(windows.shape)!r}"
+        )
+        assert preds.shape[0] == windows.shape[0] and preds.shape[-2:] == windows.shape[-2:], (
+            f"model.predict returned shape {tuple(preds.shape)!r}; "
+            f"expected batch/patch/dim to match input {tuple(windows.shape)!r}"
+        )
         # Take the last-timestep prediction of each window — that's the
         # model's estimate of the frame immediately following the context.
         preds_next = preds[:, -1]  # (N, P, d)
